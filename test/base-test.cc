@@ -92,6 +92,10 @@ TEST(string_view_test, compare) {
   check_op<std::greater_equal>();
 }
 
+TEST(base_test, is_locking) {
+  EXPECT_FALSE(fmt::detail::is_locking<const char(&)[3]>());
+}
+
 TEST(base_test, is_output_iterator) {
   EXPECT_TRUE((fmt::detail::is_output_iterator<char*, char>::value));
   EXPECT_FALSE((fmt::detail::is_output_iterator<const char*, char>::value));
@@ -110,12 +114,6 @@ TEST(base_test, is_back_insert_iterator) {
               std::back_insert_iterator<std::string>>::value);
   EXPECT_FALSE(fmt::detail::is_back_insert_iterator<
                std::front_insert_iterator<std::string>>::value);
-}
-
-TEST(base_test, buffer_appender) {
-#ifdef __cpp_lib_ranges
-  static_assert(std::output_iterator<fmt::appender, char>);
-#endif
 }
 
 #if !FMT_GCC_VERSION || FMT_GCC_VERSION >= 470
@@ -266,6 +264,16 @@ TEST(buffer_test, append_allocates_enough_storage) {
   buffer.try_resize(10);
   EXPECT_CALL(buffer, do_grow(19));
   buffer.append(test, test + 9);
+}
+
+TEST(base_test, get_buffer) {
+  mock_buffer<char> buffer;
+  void* buffer_ptr = &buffer;
+  auto&& appender_result = fmt::detail::get_buffer<char>(fmt::appender(buffer));
+  EXPECT_EQ(&appender_result, buffer_ptr);
+  auto&& back_inserter_result =
+      fmt::detail::get_buffer<char>(std::back_inserter(buffer));
+  EXPECT_EQ(&back_inserter_result, buffer_ptr);
 }
 
 struct custom_context {
@@ -425,6 +433,14 @@ TEST(arg_test, pointer_arg) {
   CHECK_ARG_SIMPLE(cp);
 }
 
+TEST(arg_test, volatile_pointer_arg) {
+  const void* p = nullptr;
+  volatile int* vip = nullptr;
+  const volatile int* cvip = nullptr;
+  CHECK_ARG(char, p, static_cast<volatile void*>(vip));
+  CHECK_ARG(char, p, static_cast<const volatile void*>(cvip));
+}
+
 struct check_custom {
   auto operator()(fmt::basic_format_arg<fmt::format_context>::handle h) const
       -> test_result {
@@ -459,13 +475,11 @@ TEST(arg_test, visit_invalid_arg) {
 
 #if FMT_USE_CONSTEXPR
 
-enum class arg_id_result { none, empty, index, name };
+enum class arg_id_result { none, index, name };
 struct test_arg_id_handler {
   arg_id_result res = arg_id_result::none;
   int index = 0;
   string_view name;
-
-  constexpr void on_auto() { res = arg_id_result::empty; }
 
   constexpr void on_index(int i) {
     res = arg_id_result::index;
@@ -486,8 +500,6 @@ constexpr test_arg_id_handler parse_arg_id(const char (&s)[N]) {
 }
 
 TEST(base_test, constexpr_parse_arg_id) {
-  static_assert(parse_arg_id(":").res == arg_id_result::empty, "");
-  static_assert(parse_arg_id("}").res == arg_id_result::empty, "");
   static_assert(parse_arg_id("42:").res == arg_id_result::index, "");
   static_assert(parse_arg_id("42:").index == 42, "");
   static_assert(parse_arg_id("foo:").res == arg_id_result::name, "");
@@ -507,7 +519,7 @@ TEST(base_test, constexpr_parse_format_specs) {
   static_assert(parse_test_specs("<").align == fmt::align::left, "");
   static_assert(parse_test_specs("*^").fill.get<char>() == '*', "");
   static_assert(parse_test_specs("+").sign == fmt::sign::plus, "");
-  static_assert(parse_test_specs("-").sign == fmt::sign::minus, "");
+  static_assert(parse_test_specs("-").sign == fmt::sign::none, "");
   static_assert(parse_test_specs(" ").sign == fmt::sign::space, "");
   static_assert(parse_test_specs("#").alt, "");
   static_assert(parse_test_specs("0").align == fmt::align::numeric, "");
